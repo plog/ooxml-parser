@@ -1,5 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import './App.css'
+import { EditorView, basicSetup } from 'codemirror'
+import { xml } from '@codemirror/lang-xml'
+import { json } from '@codemirror/lang-json'
+import { placeholder } from '@codemirror/view'
 
 // Simple test component to verify React is working
 const App: React.FC = () => {
@@ -91,6 +95,71 @@ const App: React.FC = () => {
     setError('')
   }
 
+  const CodeMirrorEditor = ({
+    value,
+    onChange,
+    readOnly = false,
+    height = '24rem',
+    language = 'xml',
+    placeholderText = '',
+  }: {
+    value: string
+    onChange?: (val: string) => void
+    readOnly?: boolean
+    height?: string
+    language?: 'xml' | 'json'
+    placeholderText?: string
+  }) => {
+    const editorRef = useRef<HTMLDivElement>(null)
+    const viewRef = useRef<EditorView | null>(null)
+
+    useEffect(() => {
+      if (!editorRef.current) return
+
+      if (viewRef.current) {
+        viewRef.current.destroy()
+      }
+
+      viewRef.current = new EditorView({
+        doc: value,
+        extensions: [
+          basicSetup,
+          language === 'json' ? json() : xml(),
+          EditorView.editable.of(!readOnly),
+          EditorView.updateListener.of((v) => {
+            if (v.docChanged && onChange) {
+              onChange(v.state.doc.toString())
+            }
+          }),
+          EditorView.theme({
+            '&': { height },
+          }),
+          placeholder(placeholderText),
+        ],
+        parent: editorRef.current,
+      })
+
+      return () => {
+        viewRef.current?.destroy()
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editorRef, readOnly, height, language])
+
+    useEffect(() => {
+      if (viewRef.current && value !== viewRef.current.state.doc.toString()) {
+        viewRef.current.dispatch({
+          changes: {
+            from: 0,
+            to: viewRef.current.state.doc.length,
+            insert: value,
+          },
+        })
+      }
+    }, [value])
+
+    return <div ref={editorRef} />
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -136,11 +205,12 @@ const App: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     XML Content
                   </label>
-                  <textarea
+                  <CodeMirrorEditor
                     value={xmlContent}
-                    onChange={(e) => setXmlContent(e.target.value)}
-                    placeholder="Paste your OOXML content here..."
-                    className="w-full h-64 p-3 border border-gray-300 rounded-md font-mono text-sm"
+                    onChange={setXmlContent}
+                    language="xml"
+                    placeholderText="Paste your OOXML content here..."
+                    height="16rem"
                   />
                 </div>
               </div>
@@ -151,16 +221,17 @@ const App: React.FC = () => {
               <p className="text-sm text-gray-600 mb-4">
                 Data for IF field evaluation (optional)
               </p>
-              <textarea
+              <CodeMirrorEditor
                 value={jsonData}
-                onChange={(e) => setJsonData(e.target.value)}
-                placeholder="Enter JSON data for IF field processing..."
-                className="w-full h-48 p-3 border border-gray-300 rounded-md font-mono text-sm"
+                onChange={setJsonData}
+                language="json"
+                placeholderText="Enter JSON data for IF field processing..."
+                height="12rem"
               />
             </div>
 
-            <button 
-              onClick={processXml} 
+            <button
+              onClick={processXml}
               disabled={isProcessing || !xmlContent.trim()}
               className="w-full py-3 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
@@ -175,11 +246,12 @@ const App: React.FC = () => {
               <p className="text-sm text-gray-600 mb-4">
                 Transformed OOXML with processed fields
               </p>
-              <textarea
+              <CodeMirrorEditor
                 value={processedXml}
                 readOnly
-                placeholder="Processed XML will appear here..."
-                className="w-full h-96 p-3 border border-gray-300 rounded-md font-mono text-sm bg-gray-50"
+                language="xml"
+                placeholderText="Processed XML will appear here..."
+                height="24rem"
               />
             </div>
           </div>
