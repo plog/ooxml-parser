@@ -8,16 +8,15 @@ import { OoxmlProcessor } from './lib/ooxml/ooxmlProcessor'
 
 // Simple test component to verify React is working
 const App: React.FC = () => {
-  const [xmlContent, setXmlContent] = useState<string>('')
-  const [jsonData, setJsonData] = useState<string>(`{}`)
+  const [xmlContent, setXmlContent]     = useState<string>('')
+  const [jsonData, setJsonData]         = useState<string>(`{}`)
   const [processedXml, setProcessedXml] = useState<string>('')
-  const [error, setError] = useState<string>('')
+  const [error, setError]               = useState<string>('')
   const [isProcessing, setIsProcessing] = useState<boolean>(false)
-  const [simplified, setSimplified] = useState(false)
-  const [originalXml, setOriginalXml] = useState<string>('')
-
-  const xmlEditorRef = useRef<EditorView | null>(null)
-  const jsonEditorRef = useRef<EditorView | null>(null)
+  const [simplified, setSimplified]     = useState(false)
+  const [originalXml, setOriginalXml]   = useState<string>('')
+  const xmlEditorRef                    = useRef<EditorView | null>(null)
+  const jsonEditorRef                   = useRef<EditorView | null>(null)
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -28,7 +27,6 @@ const App: React.FC = () => {
         if (typeof result === 'string') {
           setXmlContent(result)
           setError('')
-          // Populate jsonEditorRef with extracted fields
           try {
             const processor = new OoxmlProcessor(result)
             const fieldsJson = processor.extractFieldsAsJson()
@@ -45,7 +43,7 @@ const App: React.FC = () => {
   }
 
   const processXml = () => {
-    let xml = xmlContent
+    let xml  = xmlContent
     let json = jsonData
     if (xmlEditorRef.current) {
       xml = xmlEditorRef.current.state.doc.toString()
@@ -56,7 +54,6 @@ const App: React.FC = () => {
       setJsonData(json)
     }
 
-    // Populate jsonEditorRef with extracted fields from current XML
     try {
       const processor = new OoxmlProcessor(xml)
       const fieldsJson = processor.extractFieldsAsJson()
@@ -78,10 +75,7 @@ const App: React.FC = () => {
       if (json.trim()) {
         data = JSON.parse(json)
       }
-
-      let result = new OoxmlProcessor(xml).processMergeFields()
-      result = new OoxmlProcessor(result).processIfFields(data)
-      setProcessedXml(result)
+      setProcessedXml(xml)
     } catch (err) {
       const error = err as { message: string }
       setError(`Processing error: ${error.message}`)
@@ -90,55 +84,23 @@ const App: React.FC = () => {
     }
   }
 
-  const loadSampleXml = () => {
-    const sampleXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    <w:p>
-      <w:r>
-        <w:t>Company: </w:t>
-      </w:r>
-      <w:r>
-        <w:fldChar w:fldCharType="begin"/>
-      </w:r>
-      <w:r>
-        <w:instrText> MERGEFIELD step_info.q_companyname.q_companyname </w:instrText>
-      </w:r>
-      <w:r>
-        <w:fldChar w:fldCharType="separate"/>
-      </w:r>
-      <w:r>
-        <w:t>«step_info.q_companyname.q_companyname»</w:t>
-      </w:r>
-      <w:r>
-        <w:fldChar w:fldCharType="end"/>
-      </w:r>
-    </w:p>
-  </w:body>
-</w:document>`
-    setXmlContent(sampleXml)
-    setError('')
-  }
-
   const handleSimplifiedToggle = () => {
     setSimplified((prev) => {
       const newVal = !prev
       if (newVal) {
-        // Save original XML before simplifying
         setOriginalXml(xmlContent)
         if (xmlContent.trim()) {
-          const simplifiedXml = new OoxmlProcessor(xmlContent).simplifyXml()
+          const processor = new OoxmlProcessor(xmlContent)
+          const simplifiedXml = processor.simplifyXml()
           setXmlContent(simplifiedXml)
         }
         if (processedXml.trim()) {
-          const simplifiedProcessed = new OoxmlProcessor(processedXml).simplifyXml()
+          const processor = new OoxmlProcessor(processedXml)
+          const simplifiedProcessed = processor.simplifyXml()
           setProcessedXml(simplifiedProcessed)
         }
       } else {
-        // Restore original XML and processed output
         if (originalXml) setXmlContent(originalXml)
-        // Optionally, you may want to re-process the original XML for processedXml
-        // or store original processedXml as well if you want to restore it
       }
       return newVal
     })
@@ -239,14 +201,6 @@ const App: React.FC = () => {
                   onChange={handleFileUpload}
                   className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                 />
-              </div>
-              <div>
-                <button
-                  onClick={loadSampleXml}
-                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
-                >
-                  Load Sample XML
-                </button>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

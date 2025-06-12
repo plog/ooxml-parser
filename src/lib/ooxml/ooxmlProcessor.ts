@@ -1,315 +1,108 @@
-import { MergeField, IfField } from './types';
+// src/OoxmlProcessor.ts
+
+export interface IfField {
+  condition: string;
+  ifTrue: string | string[];
+  ifFalse: string | string[];
+}
+
+export interface FieldJsonStructure {
+  mergeFields: string[];
+  ifFields: IfField[];
+}
 
 export class OoxmlProcessor {
-  private xmlDoc: Document;
+  private xml: string;
+  private doc: Document | null = null;
   private static WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-  constructor(xmlString: string) {
-    this.xmlDoc = this.parseXmlString(xmlString);
+  constructor(xml: string) {
+    this.xml = xml;
+    this.parse();
   }
 
-  private parseXmlString(xmlString: string): Document {
+  parse(): void {
     const parser = new DOMParser();
-    return parser.parseFromString(xmlString, 'application/xml');
+    this.doc = parser.parseFromString(this.xml, 'application/xml');
   }
 
-  private serializeXmlDocument(xmlDoc: Document): string {
-    const serializer = new XMLSerializer();
-    return serializer.serializeToString(xmlDoc);
+  getTextContent(): string[] {
+    if (!this.doc) return [];
+    // Use getElementsByTagNameNS for namespaced elements
+    const textElements = this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 't');
+    return Array.from(textElements).map(el => el.textContent ?? '').filter(Boolean);
   }
 
-  public processMergeFields(): string {
-    // Find all MERGEFIELD instructions
-    const mergeFieldInstructions = this.findMergeFieldInstructions();
-    
-    mergeFieldInstructions.forEach(instruction => {
-      this.processSingleMergeField(instruction);
+  getMergeFields(): string[] {
+    if (!this.doc) return [];
+    const fields: string[] = [];
+    // Use getElementsByTagNameNS for w:instrText
+    const instrTextNodes = this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'instrText');
+
+    Array.from(instrTextNodes).forEach(el => {
+      const match = el.textContent?.match(/MERGEFIELD\s+([^\s"]+)/);
+      if (match) fields.push(match[1]);
     });
 
-    return this.serializeXmlDocument(this.xmlDoc);
+    return fields;
   }
 
-  public processIfFields(data: Record<string, any>): string {
-    // Find all IF field instructions
-    const ifFieldInstructions = this.findIfFieldInstructions();
-    
-    ifFieldInstructions.forEach(instruction => {
-      this.processSingleIfField(instruction, data);
-    });
+  getIfFields(): IfField[] {
+    if (!this.doc) return [];
+    const ifFields: IfField[] = [];
+    // Use getElementsByTagNameNS for w:r
+    const runs = Array.from(this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'r'));
 
-    return this.serializeXmlDocument(this.xmlDoc);
-  }
+    for (let i = 0; i < runs.length; i++) {
+      // Use getElementsByTagNameNS for w:fldChar
+      const fldChar = runs[i].getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'fldChar')[0];
+      if (!fldChar || fldChar.getAttribute('w:fldCharType') !== 'begin') continue;
 
-  private findMergeFieldInstructions(): Element[] {
-    const instructions: Element[] = [];
-    const instrTextElements = this.xmlDoc.getElementsByTagNameNS(
-      OoxmlProcessor.WORD_NAMESPACE,
-      "instrText"
-    );
-    
-    for (let i = 0; i < instrTextElements.length; i++) {
-      const instrText = instrTextElements[i];
-      const text = instrText.textContent?.trim() || '';
-      if (text.indexOf('MERGEFIELD') === 0) {
-        instructions.push(instrText);
+      // Use getElementsByTagNameNS for w:instrText
+      const instrText = runs[i + 1]?.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'instrText')[0];
+      if (!instrText || !instrText.textContent?.trim().startsWith('IF')) continue;
+
+      const conditionMatch = instrText.textContent.trim().match(/^IF\s+(.*?)\s+"%iftrue%"\s+"%iffalse%"/);
+      if (!conditionMatch) continue;
+
+      const condition = conditionMatch[1];
+      let trueText: string[] = [], falseText: string[] = [];
+      let current: 'true' | 'false' = 'true';
+      let j = i + 2;
+
+      while (j < runs.length) {
+        const t = runs[j].getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 't')[0];
+        if (t?.textContent?.includes('%end%')) break;
+
+        if (t?.textContent?.includes('%else%')) {
+          current = 'false';
+        } else if (t?.textContent) {
+          (current === 'true' ? trueText : falseText).push(t.textContent);
+        }
+
+        j++;
       }
+
+      ifFields.push({
+        condition,
+        ifTrue: trueText.length === 1 ? trueText[0] : trueText,
+        ifFalse: falseText.length === 1 ? falseText[0] : falseText,
+      });
     }
-    
-    return instructions;
+
+    return ifFields;
   }
 
-  private findIfFieldInstructions(): Element[] {
-    const instructions: Element[] = [];
-    const instrTextElements = this.xmlDoc.getElementsByTagNameNS(
-      OoxmlProcessor.WORD_NAMESPACE,
-      "instrText"
-    );
-    
-    for (let i = 0; i < instrTextElements.length; i++) {
-      const instrText = instrTextElements[i];
-      const text = instrText.textContent?.trim() || '';
-      if (text.indexOf('IF ') === 0) {
-        instructions.push(instrText);
-      }
-    }
-    
-    return instructions;
-  }
-
-  private processSingleMergeField(instrTextElement: Element): void {
-    // Find the field structure: begin -> instrText -> separate -> placeholder -> end
-    const beginElement = this.findPreviousFldChar(instrTextElement, 'begin');
-    const separateElement = this.findNextFldChar(instrTextElement, 'separate');
-    const endElement = this.findNextFldChar(separateElement, 'end');
-    
-    if (!beginElement || !separateElement || !endElement) {
-      console.warn('Incomplete MERGEFIELD structure found');
-      return;
-    }
-
-    // Extract field name from instrText
-    const instrText = instrTextElement.textContent?.trim() || '';
-    const fieldName = this.extractMergeFieldName(instrText);
-    
-    // Find the placeholder text element (between separate and end)
-    const placeholderElement = this.findPlaceholderTextElement(separateElement, endElement);
-    
-    if (placeholderElement) {
-      // Replace placeholder with dots and add invisible field name
-      this.replacePlaceholderWithDots(placeholderElement, fieldName);
-    }
-  }
-
-  private processSingleIfField(instrTextElement: Element, data: Record<string, any>): void {
-    // Find the field structure: begin -> instrText -> separate -> placeholder -> end
-    const beginElement = this.findPreviousFldChar(instrTextElement, 'begin');
-    const separateElement = this.findNextFldChar(instrTextElement, 'separate');
-    const endElement = this.findNextFldChar(separateElement, 'end');
-    
-    if (!beginElement || !separateElement || !endElement) {
-      console.warn('Incomplete IF field structure found');
-      return;
-    }
-
-    // Parse the IF statement
-    const instrText = instrTextElement.textContent?.trim() || '';
-    const ifCondition = this.parseIfStatement(instrText);
-    
-    if (!ifCondition) {
-      console.warn('Could not parse IF statement:', instrText);
-      return;
-    }
-
-    // Evaluate the condition
-    const conditionResult = this.evaluateIfCondition(ifCondition, data);
-    
-    // Find the content after the end tag
-    const contentAfterEnd = this.findContentAfterIfEnd(endElement);
-    
-    // Process the content based on condition result
-    this.processIfContent(contentAfterEnd, conditionResult);
-  }
-
-  private parseIfStatement(instrText: string): IfField | null {
-    // Parse IF statement: IF "variable" operator "value" "%iftrue%" "%iffalse%"
-    const ifMatch = instrText.match(/IF\s+"([^"]+)"\s*([=<>!]+)\s*"([^"]+)"\s*"([^"]*)"\s*"([^"]*)"/);
-    
-    if (!ifMatch) {
-      return null;
-    }
-
-    const [, variable, operator, value, trueContent, falseContent] = ifMatch;
-    
+  extractFieldsAsJson(): FieldJsonStructure {
     return {
-      condition: `${variable} ${operator} ${value}`,
-      trueContent,
-      falseContent
+      mergeFields: this.getMergeFields(),
+      ifFields: this.getIfFields(),
     };
   }
 
-  private evaluateIfCondition(ifField: IfField, data: Record<string, any>): boolean {
-    // Extract variable, operator, and value from condition
-    const conditionMatch = ifField.condition.match(/([^\s]+)\s*([=<>!]+)\s*(.+)/);
-    
-    if (!conditionMatch) {
-      return false;
-    }
-
-    const [, variable, operator, expectedValue] = conditionMatch;
-    const actualValue = this.getNestedValue(data, variable);
-    
-    switch (operator) {
-      case '=':
-      case '==':
-        return String(actualValue) === expectedValue;
-      case '!=':
-      case '<>':
-        return String(actualValue) !== expectedValue;
-      case '>':
-        return Number(actualValue) > Number(expectedValue);
-      case '<':
-        return Number(actualValue) < Number(expectedValue);
-      case '>=':
-        return Number(actualValue) >= Number(expectedValue);
-      case '<=':
-        return Number(actualValue) <= Number(expectedValue);
-      default:
-        return false;
-    }
-  }
-
-  private getNestedValue(data: Record<string, any>, path: string): any {
-    // Handle nested object access like "step.question.value"
-    return path.split('.').reduce((obj, key) => obj?.[key], data);
-  }
-
-  private findContentAfterIfEnd(endElement: Element): Element[] {
-    const content: Element[] = [];
-    let currentElement = endElement.parentElement?.nextElementSibling;
-    
-    while (currentElement) {
-      // Look for %end% marker to stop
-      const textElements = currentElement.querySelectorAll('w\\:t');
-      let foundEnd = false;
-      
-      for (let i = 0; i < textElements.length; i++) {
-        const textEl = textElements[i];
-        if (textEl.textContent && textEl.textContent.indexOf('%end%') !== -1) {
-          foundEnd = true;
-          break;
-        }
-      }
-      
-      if (foundEnd) {
-        content.push(currentElement);
-        break;
-      }
-      
-      content.push(currentElement);
-      currentElement = currentElement.nextElementSibling;
-    }
-    
-    return content;
-  }
-
-  private processIfContent(contentElements: Element[], showTrueBranch: boolean): void {
-    let inTrueBranch = true;
-    let foundElse = false;
-    
-    contentElements.forEach(element => {
-      const textElements = element.querySelectorAll('w\\:t');
-      
-      textElements.forEach(textEl => {
-        const text = textEl.textContent || '';
-        
-        if (text.indexOf('%else%') !== -1) {
-          foundElse = true;
-          inTrueBranch = false;
-          // Remove the %else% marker
-          textEl.textContent = text.replace('%else%', '');
-        }
-        
-        if (text.indexOf('%end%') !== -1) {
-          // Remove the %end% marker
-          textEl.textContent = text.replace('%end%', '');
-        }
-      });
-      
-      // Hide/show element based on condition and current branch
-      const shouldShow = showTrueBranch ? inTrueBranch : !inTrueBranch;
-      
-      if (!shouldShow) {
-        // Hide the element by removing it or setting display:none
-        element.remove();
-      }
-    });
-  }
-
-  private findPreviousFldChar(startElement: Element, fldCharType: string): Element | null {
-    let currentElement = startElement.parentElement;
-    
-    while (currentElement) {
-      const fldChar = currentElement.querySelector(`w\\:fldChar[w\\:fldCharType="${fldCharType}"]`);
-      if (fldChar) {
-        return fldChar;
-      }
-      currentElement = currentElement.previousElementSibling as HTMLElement | null;
-    }
-    
-    return null;
-  }
-
-  private findNextFldChar(startElement: Element | null, fldCharType: string): Element | null {
-    if (!startElement) return null;
-    
-    let currentElement = startElement.parentElement?.nextElementSibling;
-    
-    while (currentElement) {
-      const fldChar = currentElement.querySelector(`w\\:fldChar[w\\:fldCharType="${fldCharType}"]`);
-      if (fldChar) {
-        return fldChar;
-      }
-      currentElement = currentElement.nextElementSibling;
-    }
-    
-    return null;
-  }
-
-  private extractMergeFieldName(instrText: string): string {
-    // Extract field name from "MERGEFIELD fieldname" or "MERGEFIELD fieldname.subfield"
-    const match = instrText.match(/MERGEFIELD\s+([^\s]+)/);
-    return match ? match[1] : '';
-  }
-
-  private findPlaceholderTextElement(separateElement: Element, endElement: Element): Element | null {
-    let currentElement = separateElement.parentElement?.nextElementSibling;
-    
-    while (currentElement && currentElement !== endElement.parentElement) {
-      const textElement = currentElement.querySelector('w\\:t');
-      if (textElement) {
-        return textElement;
-      }
-      currentElement = currentElement.nextElementSibling;
-    }
-    
-    return null;
-  }
-
-  private replacePlaceholderWithDots(textElement: Element, fieldName: string): void {
-    // Replace text content with dots
-    textElement.textContent = '..........';
-    
-    // Add invisible field name as a data attribute or comment for LLM processing
-    textElement.setAttribute('data-merge-field', fieldName);
-    
-    // Optionally add an invisible comment node for LLM
-    const comment = this.xmlDoc.createComment(`MERGEFIELD:${fieldName}`);
-    textElement.parentNode?.insertBefore(comment, textElement);
-  }
-
-  static fromString(xml: string): Document {
-    const parser = new DOMParser();
-    return parser.parseFromString(xml, 'application/xml');
+  private serializeXmlDocument(doc: Document): string {
+    const serializer = new XMLSerializer();
+    return serializer.serializeToString(doc);
   }
 
   /**
@@ -322,7 +115,8 @@ export class OoxmlProcessor {
       const tagsToRemove = ['tabs', 'rFonts', 'drawing', 'pStyle', 'rPr', 'pPr', 'tcPr','tblPr', 'tblGrid'];
 
       tagsToRemove.forEach(tag => {
-        const elements = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
+        if (!this.doc) return;
+        const elements = Array.from(this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
         elements.forEach(el => {
           el.parentNode?.removeChild(el);
         });
@@ -333,7 +127,8 @@ export class OoxmlProcessor {
         let removed: boolean;
         do {
           removed = false;
-          const elements = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
+          if (!this.doc) return;
+          const elements = Array.from(this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
           elements.forEach(el => {
             // Remove if no element/text children or only whitespace
             if (
@@ -352,36 +147,39 @@ export class OoxmlProcessor {
       removeAllEmpty('p');
 
       // Remove <w:p> containing only one <w:r> with one <w:br w:type="textWrapping"/>
-      const paragraphs = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'p'));
-      paragraphs.forEach(p => {
-        // Get non-whitespace child elements of <w:p>
-        const pChildren = Array.from(p.childNodes).filter(
-          n => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent?.trim())
-        );
-        if (
-          pChildren.length === 1 &&
-          pChildren[0].nodeType === Node.ELEMENT_NODE &&
-          (pChildren[0] as Element).localName === 'r'
-        ) {
-          const r = pChildren[0] as Element;
-          const rChildren = Array.from(r.childNodes).filter(
+      if (this.doc) {
+        const paragraphs = Array.from(this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'p'));
+        paragraphs.forEach(p => {
+          // Get non-whitespace child elements of <w:p>
+          const pChildren = Array.from(p.childNodes).filter(
             n => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent?.trim())
           );
           if (
-            rChildren.length === 1 &&
-            rChildren[0].nodeType === Node.ELEMENT_NODE &&
-            (rChildren[0] as Element).localName === 'br' &&
-            (rChildren[0] as Element).namespaceURI === OoxmlProcessor.WORD_NAMESPACE &&
-            (rChildren[0] as Element).getAttribute('w:type') === 'textWrapping'
+            pChildren.length === 1 &&
+            pChildren[0].nodeType === Node.ELEMENT_NODE &&
+            (pChildren[0] as Element).localName === 'r'
           ) {
-            p.parentNode?.removeChild(p);
+            const r = pChildren[0] as Element;
+            const rChildren = Array.from(r.childNodes).filter(
+              n => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent?.trim())
+            );
+            if (
+              rChildren.length === 1 &&
+              rChildren[0].nodeType === Node.ELEMENT_NODE &&
+              (rChildren[0] as Element).localName === 'br' &&
+              (rChildren[0] as Element).namespaceURI === OoxmlProcessor.WORD_NAMESPACE &&
+              (rChildren[0] as Element).getAttribute('w:type') === 'textWrapping'
+            ) {
+              p.parentNode?.removeChild(p);
+            }
           }
-        }
-      });
+        });
+      }
 
 
       // Serialize and remove empty lines from the XML string
-      let xmlString = this.serializeXmlDocument(this.xmlDoc);
+      if (!this.doc) return '';
+      let xmlString = this.serializeXmlDocument(this.doc);
       xmlString = xmlString
         .split('\n')
         .filter(line => line.trim() !== '')
@@ -390,58 +188,5 @@ export class OoxmlProcessor {
       return xmlString;
     }  
 
-  public extractFieldsAsJson(): {
-  mergeFields: { fieldName: string, instrText: string }[],
-  ifFields: { condition: string, trueContent: string, falseContent: string, instrText: string }[]
-} {
-  const mergeFields: { fieldName: string, instrText: string }[] = [];
-  const ifFields: { condition: string, trueContent: string, falseContent: string, instrText: string }[] = [];
 
-  // Find all <w:fldChar w:fldCharType="begin"/>
-  const beginFldChars = Array.from(
-    this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, "fldChar")
-  ).filter(el => el.getAttribute('w:fldCharType') === 'begin');
-
-  for (const beginFldChar of beginFldChars) {
-    // Find the parent <w:r> of the begin
-    let run = beginFldChar.parentElement;
-    // Find all following siblings until fldCharType="end"
-    let instrTexts: string[] = [];
-    let foundInstr = false;
-    let foundEnd = false;
-    let current = run?.nextElementSibling;
-    while (current && !foundEnd) {
-      // Check for fldCharType="end"
-      const fldChar = current.querySelector('w\\:fldChar');
-      if (fldChar && fldChar.getAttribute('w:fldCharType') === 'end') {
-        foundEnd = true;
-        break;
-      }
-      // Collect all <w:instrText>
-      const instrTextEls = current.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, "instrText");
-      for (let i = 0; i < instrTextEls.length; i++) {
-        instrTexts.push(instrTextEls[i].textContent || "");
-        foundInstr = true;
-      }
-      current = current.nextElementSibling;
-    }
-    if (foundInstr) {
-      const instrText = instrTexts.join('').replace(/\s+/g, ' ').trim();
-      if (instrText.toUpperCase().startsWith('MERGEFIELD')) {
-        const fieldName = this.extractMergeFieldName(instrText);
-        mergeFields.push({ fieldName, instrText });
-      } else if (instrText.toUpperCase().startsWith('IF')) {
-        const ifParsed = this.parseIfStatement(instrText);
-        ifFields.push(
-          ifParsed
-            ? { condition: ifParsed.condition, trueContent: ifParsed.trueContent, falseContent: ifParsed.falseContent, instrText }
-            : { condition: '', trueContent: '', falseContent: '', instrText }
-        );
-      }
-    }
-  }
-
-  return { mergeFields, ifFields };
 }
-}
-
