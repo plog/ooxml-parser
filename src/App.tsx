@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
 import './App.css'
 import { EditorView, basicSetup } from 'codemirror'
+import { placeholder as cmPlaceholder } from '@codemirror/view'
 import { xml } from '@codemirror/lang-xml'
 import { json } from '@codemirror/lang-json'
-import { placeholder } from '@codemirror/view'
+import { OoxmlProcessor } from './lib/ooxml/ooxmlProcessor'
 
 // Simple test component to verify React is working
 const App: React.FC = () => {
@@ -21,6 +22,7 @@ const App: React.FC = () => {
   const [processedXml, setProcessedXml] = useState<string>('')
   const [error, setError] = useState<string>('')
   const [isProcessing, setIsProcessing] = useState<boolean>(false)
+  const [simplified, setSimplified] = useState(false)
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -54,8 +56,15 @@ const App: React.FC = () => {
         data = JSON.parse(jsonData)
       }
 
-      // Simple processing for now
-      const result = `<!-- Processed XML -->\n${xmlContent}`
+      // Instantiate OoxmlProcessor and process the XML
+      const processor = new OoxmlProcessor(xmlContent)
+      // For merge fields only:
+      // const result = processor.processMergeFields()
+      // For IF fields (with data):
+      // const result = processor.processIfFields(data)
+      // For both, you might want to chain or combine:
+      let result = processor.processMergeFields()
+      result = new OoxmlProcessor(result).processIfFields(data)
       setProcessedXml(result)
     } catch (err) {
       const error = err as { message: string }
@@ -95,20 +104,38 @@ const App: React.FC = () => {
     setError('')
   }
 
+  const handleSimplifiedToggle = () => {
+    setSimplified((prev) => {
+      const newVal = !prev
+      if (newVal) {
+        // Simplify both XML input and processed output
+        if (xmlContent.trim()) {
+          const simplifiedXml = new OoxmlProcessor(xmlContent).simplifyXml()
+          setXmlContent(simplifiedXml)
+        }
+        if (processedXml.trim()) {
+          const simplifiedProcessed = new OoxmlProcessor(processedXml).simplifyXml()
+          setProcessedXml(simplifiedProcessed)
+        }
+      }
+      return newVal
+    })
+  }
+
   const CodeMirrorEditor = ({
     value,
     onChange,
     readOnly = false,
     height = '24rem',
     language = 'xml',
-    placeholderText = '',
+    placeholder = '',
   }: {
     value: string
     onChange?: (val: string) => void
     readOnly?: boolean
     height?: string
     language?: 'xml' | 'json'
-    placeholderText?: string
+    placeholder?: string
   }) => {
     const editorRef = useRef<HTMLDivElement>(null)
     const viewRef = useRef<EditorView | null>(null)
@@ -134,7 +161,7 @@ const App: React.FC = () => {
           EditorView.theme({
             '&': { height },
           }),
-          placeholder(placeholderText),
+          cmPlaceholder(placeholder),
         ],
         parent: editorRef.current,
       })
@@ -180,7 +207,18 @@ const App: React.FC = () => {
           {/* Input Section */}
           <div className="space-y-6">
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-semibold mb-4">XML Input</h2>
+              <div className="flex items-center mb-4">
+                <h2 className="text-xl font-semibold">XML Input</h2>
+                <label className="ml-4 flex items-center text-sm font-medium text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={simplified}
+                    onChange={handleSimplifiedToggle}
+                    className="mr-2"
+                  />
+                  Simplified view
+                </label>
+              </div>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -209,7 +247,7 @@ const App: React.FC = () => {
                     value={xmlContent}
                     onChange={setXmlContent}
                     language="xml"
-                    placeholderText="Paste your OOXML content here..."
+                    placeholder="Paste your OOXML content here..."
                     height="16rem"
                   />
                 </div>
@@ -225,7 +263,7 @@ const App: React.FC = () => {
                 value={jsonData}
                 onChange={setJsonData}
                 language="json"
-                placeholderText="Enter JSON data for IF field processing..."
+                placeholder="Enter JSON data for IF field processing..."
                 height="12rem"
               />
             </div>
@@ -250,7 +288,7 @@ const App: React.FC = () => {
                 value={processedXml}
                 readOnly
                 language="xml"
-                placeholderText="Processed XML will appear here..."
+                placeholder="Processed XML will appear here..."
                 height="24rem"
               />
             </div>

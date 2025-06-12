@@ -2,6 +2,7 @@ import { MergeField, IfField } from './types';
 
 export class OoxmlProcessor {
   private xmlDoc: Document;
+  private static WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
   constructor(xmlString: string) {
     this.xmlDoc = this.parseXmlString(xmlString);
@@ -39,30 +40,64 @@ export class OoxmlProcessor {
     return this.serializeXmlDocument(this.xmlDoc);
   }
 
+  public simplifyXml(): string {
+    // Remove all <w:tabs> elements
+    const tabs = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'tabs'));
+    tabs.forEach(tab => tab.parentNode?.removeChild(tab));
+
+    // Remove all <w:rFonts> elements
+    const rFonts = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'rFonts'));
+    rFonts.forEach(rFont => rFont.parentNode?.removeChild(rFont));
+
+    const drawing = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'drawing'));
+    rFonts.forEach(drawing => drawing.parentNode?.removeChild(drawing));
+    
+    // Remove empty <w:r> and <w:p> elements
+    const removeIfEmpty = (tag: string) => {
+      const elements = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
+      elements.forEach(el => {
+        if (!el.textContent?.trim() && el.childNodes.length === 0) {
+          el.parentNode?.removeChild(el);
+        }
+      });
+    };
+    removeIfEmpty('r');
+    removeIfEmpty('p');
+    return this.serializeXmlDocument(this.xmlDoc);
+  }
+
   private findMergeFieldInstructions(): Element[] {
     const instructions: Element[] = [];
-    const instrTextElements = this.xmlDoc.querySelectorAll('w\\:instrText');
+    const instrTextElements = this.xmlDoc.getElementsByTagNameNS(
+      OoxmlProcessor.WORD_NAMESPACE,
+      "instrText"
+    );
     
-    instrTextElements.forEach(instrText => {
+    for (let i = 0; i < instrTextElements.length; i++) {
+      const instrText = instrTextElements[i];
       const text = instrText.textContent?.trim() || '';
-      if (text.startsWith('MERGEFIELD')) {
+      if (text.indexOf('MERGEFIELD') === 0) {
         instructions.push(instrText);
       }
-    });
+    }
     
     return instructions;
   }
 
   private findIfFieldInstructions(): Element[] {
     const instructions: Element[] = [];
-    const instrTextElements = this.xmlDoc.querySelectorAll('w\\:instrText');
+    const instrTextElements = this.xmlDoc.getElementsByTagNameNS(
+      OoxmlProcessor.WORD_NAMESPACE,
+      "instrText"
+    );
     
-    instrTextElements.forEach(instrText => {
+    for (let i = 0; i < instrTextElements.length; i++) {
+      const instrText = instrTextElements[i];
       const text = instrText.textContent?.trim() || '';
-      if (text.startsWith('IF ')) {
+      if (text.indexOf('IF ') === 0) {
         instructions.push(instrText);
       }
-    });
+    }
     
     return instructions;
   }
@@ -183,8 +218,9 @@ export class OoxmlProcessor {
       const textElements = currentElement.querySelectorAll('w\\:t');
       let foundEnd = false;
       
-      for (const textEl of textElements) {
-        if (textEl.textContent?.includes('%end%')) {
+      for (let i = 0; i < textElements.length; i++) {
+        const textEl = textElements[i];
+        if (textEl.textContent && textEl.textContent.indexOf('%end%') !== -1) {
           foundEnd = true;
           break;
         }
@@ -212,14 +248,14 @@ export class OoxmlProcessor {
       textElements.forEach(textEl => {
         const text = textEl.textContent || '';
         
-        if (text.includes('%else%')) {
+        if (text.indexOf('%else%') !== -1) {
           foundElse = true;
           inTrueBranch = false;
           // Remove the %else% marker
           textEl.textContent = text.replace('%else%', '');
         }
         
-        if (text.includes('%end%')) {
+        if (text.indexOf('%end%') !== -1) {
           // Remove the %end% marker
           textEl.textContent = text.replace('%end%', '');
         }
@@ -243,7 +279,7 @@ export class OoxmlProcessor {
       if (fldChar) {
         return fldChar;
       }
-      currentElement = currentElement.previousElementSibling;
+      currentElement = currentElement.previousElementSibling as HTMLElement | null;
     }
     
     return null;
@@ -295,6 +331,11 @@ export class OoxmlProcessor {
     // Optionally add an invisible comment node for LLM
     const comment = this.xmlDoc.createComment(`MERGEFIELD:${fieldName}`);
     textElement.parentNode?.insertBefore(comment, textElement);
+  }
+
+  static fromString(xml: string): Document {
+    const parser = new DOMParser();
+    return parser.parseFromString(xml, 'application/xml');
   }
 }
 
