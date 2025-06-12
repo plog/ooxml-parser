@@ -1,7 +1,9 @@
 // src/OoxmlProcessor.ts
 
 export interface IfField {
-  condition: string;
+  left: string;
+  operator: string;
+  right: string;
   ifTrue: string | string[];
   ifFalse: string | string[];
 }
@@ -50,22 +52,33 @@ export class OoxmlProcessor {
   getIfFields(): IfField[] {
     if (!this.doc) return [];
     const ifFields: IfField[] = [];
-    // Use getElementsByTagNameNS for w:r
     const runs = Array.from(this.doc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'r'));
 
     for (let i = 0; i < runs.length; i++) {
-      // Use getElementsByTagNameNS for w:fldChar
       const fldChar = runs[i].getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'fldChar')[0];
       if (!fldChar || fldChar.getAttribute('w:fldCharType') !== 'begin') continue;
 
-      // Use getElementsByTagNameNS for w:instrText
       const instrText = runs[i + 1]?.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'instrText')[0];
       if (!instrText || !instrText.textContent?.trim().startsWith('IF')) continue;
 
-      const conditionMatch = instrText.textContent.trim().match(/^IF\s+(.*?)\s+"%iftrue%"\s+"%iffalse%"/);
-      if (!conditionMatch) continue;
+      // Extract the condition string
+      const conditionFullMatch = instrText.textContent.trim().match(/^IF\s+(.+?)\s+"%iftrue%"\s+"%iffalse%"/);
+      if (!conditionFullMatch) continue;
 
-      const condition = conditionMatch[1];
+      const condition = conditionFullMatch[1];
+
+      // Try to split the condition into left, operator, right
+      // Handles quoted left/right, and operators (=, <>, <, >, <=, >=)
+      const condMatch = condition.match(/^("?[^"]+"?)\s*(=|<>|<=|>=|<|>)\s*("?[^"]+"?)$/);
+      let left = '', operator = '', right = '';
+      if (condMatch) {
+        left = condMatch[1].trim().replace(/^"(.*)"$/, '$1');
+        operator = condMatch[2].trim();
+        right = condMatch[3].trim().replace(/^"(.*)"$/, '$1');
+      } else {
+        left = condition;
+      }
+
       let trueText: string[] = [], falseText: string[] = [];
       let current: 'true' | 'false' = 'true';
       let j = i + 2;
@@ -77,14 +90,19 @@ export class OoxmlProcessor {
         if (t?.textContent?.includes('%else%')) {
           current = 'false';
         } else if (t?.textContent) {
-          (current === 'true' ? trueText : falseText).push(t.textContent);
+          // Remove "{IF}" nodes from ifTrue/ifFalse
+          if (t.textContent.trim() !== '{IF}') {
+            (current === 'true' ? trueText : falseText).push(t.textContent);
+          }
         }
 
         j++;
       }
 
       ifFields.push({
-        condition,
+        left,
+        operator,
+        right,
         ifTrue: trueText.length === 1 ? trueText[0] : trueText,
         ifFalse: falseText.length === 1 ? falseText[0] : falseText,
       });
