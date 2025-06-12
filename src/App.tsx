@@ -9,16 +9,7 @@ import { OoxmlProcessor } from './lib/ooxml/ooxmlProcessor'
 // Simple test component to verify React is working
 const App: React.FC = () => {
   const [xmlContent, setXmlContent] = useState<string>('')
-  const [jsonData, setJsonData] = useState<string>(`{
-  "steplessornumber": {
-    "questionlessornumber": "Non, une seule personne est bailleur du bien"
-  },
-  "step_info": {
-    "q_companyname": {
-      "q_companyname": "Example Company Ltd"
-    }
-  }
-}`)
+  const [jsonData, setJsonData] = useState<string>(`{}`)
   const [processedXml, setProcessedXml] = useState<string>('')
   const [error, setError] = useState<string>('')
   const [isProcessing, setIsProcessing] = useState<boolean>(false)
@@ -37,6 +28,14 @@ const App: React.FC = () => {
         if (typeof result === 'string') {
           setXmlContent(result)
           setError('')
+          // Populate jsonEditorRef with extracted fields
+          try {
+            const processor = new OoxmlProcessor(result)
+            const fieldsJson = processor.extractFieldsAsJson()
+            setEditorValue(jsonEditorRef, JSON.stringify(fieldsJson, null, 2))
+          } catch (err) {
+            // ignore extraction errors
+          }
         }
       }
       reader.readAsText(file)
@@ -57,6 +56,15 @@ const App: React.FC = () => {
       setJsonData(json)
     }
 
+    // Populate jsonEditorRef with extracted fields from current XML
+    try {
+      const processor = new OoxmlProcessor(xml)
+      const fieldsJson = processor.extractFieldsAsJson()
+      setEditorValue(jsonEditorRef, JSON.stringify(fieldsJson, null, 2))
+    } catch (err) {
+      // ignore extraction errors
+    }
+
     if (!xml.trim()) {
       setError('Please provide XML content')
       return
@@ -71,14 +79,7 @@ const App: React.FC = () => {
         data = JSON.parse(json)
       }
 
-      // Instantiate OoxmlProcessor and process the XML
-      const processor = new OoxmlProcessor(xml)
-      // For merge fields only:
-      // const result = processor.processMergeFields()
-      // For IF fields (with data):
-      // const result = processor.processIfFields(data)
-      // For both, you might want to chain or combine:
-      let result = processor.processMergeFields()
+      let result = new OoxmlProcessor(xml).processMergeFields()
       result = new OoxmlProcessor(result).processIfFields(data)
       setProcessedXml(result)
     } catch (err) {
@@ -159,11 +160,9 @@ const App: React.FC = () => {
     const localRef = useRef<HTMLDivElement>(null)
     useEffect(() => {
       if (!localRef.current) return
-
       if (editorRef && editorRef.current) {
         editorRef.current.destroy()
       }
-
       const view = new EditorView({
         doc: value,
         extensions: [
@@ -184,6 +183,19 @@ const App: React.FC = () => {
     }, [readOnly, language, placeholder, value])
 
     return <div ref={localRef} />
+  }
+
+  // Add this helper function to set the value of a CodeMirror editor via its ref
+  function setEditorValue(editorRef: React.MutableRefObject<EditorView | null>, value: string) {
+    if (editorRef.current) {
+      editorRef.current.dispatch({
+        changes: {
+          from: 0,
+          to: editorRef.current.state.doc.length,
+          insert: value,
+        },
+      })
+    }
   }
 
   return (
@@ -247,6 +259,14 @@ const App: React.FC = () => {
                   editorRef={xmlEditorRef}
                 />
               </div>
+              <button
+                onClick={processXml}
+                disabled={isProcessing || !xmlContent.trim()}
+                className="w-full py-3 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {isProcessing ? 'Processing...' : 'Process OOXML'}
+              </button>                
+
             </div>
           </div>
 
@@ -260,14 +280,6 @@ const App: React.FC = () => {
               editorRef={jsonEditorRef}
             />
           </div>
-
-          <button
-            onClick={processXml}
-            disabled={isProcessing || !xmlContent.trim()}
-            className="w-full py-3 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            {isProcessing ? 'Processing...' : 'Process OOXML'}
-          </button>
 
           {/* Output Section */}
           <div className="bg-white rounded-lg shadow p-6">

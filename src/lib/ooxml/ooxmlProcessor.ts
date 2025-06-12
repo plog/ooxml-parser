@@ -389,5 +389,59 @@ export class OoxmlProcessor {
 
       return xmlString;
     }  
+
+  public extractFieldsAsJson(): {
+  mergeFields: { fieldName: string, instrText: string }[],
+  ifFields: { condition: string, trueContent: string, falseContent: string, instrText: string }[]
+} {
+  const mergeFields: { fieldName: string, instrText: string }[] = [];
+  const ifFields: { condition: string, trueContent: string, falseContent: string, instrText: string }[] = [];
+
+  // Find all <w:fldChar w:fldCharType="begin"/>
+  const beginFldChars = Array.from(
+    this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, "fldChar")
+  ).filter(el => el.getAttribute('w:fldCharType') === 'begin');
+
+  for (const beginFldChar of beginFldChars) {
+    // Find the parent <w:r> of the begin
+    let run = beginFldChar.parentElement;
+    // Find all following siblings until fldCharType="end"
+    let instrTexts: string[] = [];
+    let foundInstr = false;
+    let foundEnd = false;
+    let current = run?.nextElementSibling;
+    while (current && !foundEnd) {
+      // Check for fldCharType="end"
+      const fldChar = current.querySelector('w\\:fldChar');
+      if (fldChar && fldChar.getAttribute('w:fldCharType') === 'end') {
+        foundEnd = true;
+        break;
+      }
+      // Collect all <w:instrText>
+      const instrTextEls = current.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, "instrText");
+      for (let i = 0; i < instrTextEls.length; i++) {
+        instrTexts.push(instrTextEls[i].textContent || "");
+        foundInstr = true;
+      }
+      current = current.nextElementSibling;
+    }
+    if (foundInstr) {
+      const instrText = instrTexts.join('').replace(/\s+/g, ' ').trim();
+      if (instrText.toUpperCase().startsWith('MERGEFIELD')) {
+        const fieldName = this.extractMergeFieldName(instrText);
+        mergeFields.push({ fieldName, instrText });
+      } else if (instrText.toUpperCase().startsWith('IF')) {
+        const ifParsed = this.parseIfStatement(instrText);
+        ifFields.push(
+          ifParsed
+            ? { condition: ifParsed.condition, trueContent: ifParsed.trueContent, falseContent: ifParsed.falseContent, instrText }
+            : { condition: '', trueContent: '', falseContent: '', instrText }
+        );
+      }
+    }
+  }
+
+  return { mergeFields, ifFields };
+}
 }
 
