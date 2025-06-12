@@ -23,6 +23,10 @@ const App: React.FC = () => {
   const [error, setError] = useState<string>('')
   const [isProcessing, setIsProcessing] = useState<boolean>(false)
   const [simplified, setSimplified] = useState(false)
+  const [originalXml, setOriginalXml] = useState<string>('')
+
+  const xmlEditorRef = useRef<EditorView | null>(null)
+  const jsonEditorRef = useRef<EditorView | null>(null)
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -42,7 +46,18 @@ const App: React.FC = () => {
   }
 
   const processXml = () => {
-    if (!xmlContent.trim()) {
+    let xml = xmlContent
+    let json = jsonData
+    if (xmlEditorRef.current) {
+      xml = xmlEditorRef.current.state.doc.toString()
+      setXmlContent(xml)
+    }
+    if (jsonEditorRef.current) {
+      json = jsonEditorRef.current.state.doc.toString()
+      setJsonData(json)
+    }
+
+    if (!xml.trim()) {
       setError('Please provide XML content')
       return
     }
@@ -52,12 +67,12 @@ const App: React.FC = () => {
 
     try {
       let data: Record<string, any> = {}
-      if (jsonData.trim()) {
-        data = JSON.parse(jsonData)
+      if (json.trim()) {
+        data = JSON.parse(json)
       }
 
       // Instantiate OoxmlProcessor and process the XML
-      const processor = new OoxmlProcessor(xmlContent)
+      const processor = new OoxmlProcessor(xml)
       // For merge fields only:
       // const result = processor.processMergeFields()
       // For IF fields (with data):
@@ -108,7 +123,8 @@ const App: React.FC = () => {
     setSimplified((prev) => {
       const newVal = !prev
       if (newVal) {
-        // Simplify both XML input and processed output
+        // Save original XML before simplifying
+        setOriginalXml(xmlContent)
         if (xmlContent.trim()) {
           const simplifiedXml = new OoxmlProcessor(xmlContent).simplifyXml()
           setXmlContent(simplifiedXml)
@@ -117,6 +133,11 @@ const App: React.FC = () => {
           const simplifiedProcessed = new OoxmlProcessor(processedXml).simplifyXml()
           setProcessedXml(simplifiedProcessed)
         }
+      } else {
+        // Restore original XML and processed output
+        if (originalXml) setXmlContent(originalXml)
+        // Optionally, you may want to re-process the original XML for processedXml
+        // or store original processedXml as well if you want to restore it
       }
       return newVal
     })
@@ -124,67 +145,45 @@ const App: React.FC = () => {
 
   const CodeMirrorEditor = ({
     value,
-    onChange,
     readOnly = false,
-    height = '24rem',
     language = 'xml',
     placeholder = '',
+    editorRef,
   }: {
     value: string
-    onChange?: (val: string) => void
     readOnly?: boolean
-    height?: string
     language?: 'xml' | 'json'
     placeholder?: string
+    editorRef?: React.MutableRefObject<EditorView | null>
   }) => {
-    const editorRef = useRef<HTMLDivElement>(null)
-    const viewRef = useRef<EditorView | null>(null)
-
+    const localRef = useRef<HTMLDivElement>(null)
     useEffect(() => {
-      if (!editorRef.current) return
+      if (!localRef.current) return
 
-      if (viewRef.current) {
-        viewRef.current.destroy()
+      if (editorRef && editorRef.current) {
+        editorRef.current.destroy()
       }
 
-      viewRef.current = new EditorView({
+      const view = new EditorView({
         doc: value,
         extensions: [
           basicSetup,
           language === 'json' ? json() : xml(),
           EditorView.editable.of(!readOnly),
-          EditorView.updateListener.of((v) => {
-            if (v.docChanged && onChange) {
-              onChange(v.state.doc.toString())
-            }
-          }),
-          EditorView.theme({
-            '&': { height },
-          }),
           cmPlaceholder(placeholder),
         ],
-        parent: editorRef.current,
+        parent: localRef.current,
       })
 
+      if (editorRef) editorRef.current = view
+
       return () => {
-        viewRef.current?.destroy()
+        view.destroy()
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [editorRef, readOnly, height, language])
+    }, [readOnly, language, placeholder, value])
 
-    useEffect(() => {
-      if (viewRef.current && value !== viewRef.current.state.doc.toString()) {
-        viewRef.current.dispatch({
-          changes: {
-            from: 0,
-            to: viewRef.current.state.doc.length,
-            insert: value,
-          },
-        })
-      }
-    }, [value])
-
-    return <div ref={editorRef} />
+    return <div ref={localRef} />
   }
 
   return (
@@ -192,6 +191,7 @@ const App: React.FC = () => {
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="text-center space-y-2">
           <h1 className="text-3xl font-bold text-gray-900">OOXML Field Processor</h1>
+          <a href="https://www.datypic.com/sc/ooxml/searchres.html">ooxml reference</a>
           <p className="text-gray-600">
             Test MERGEFIELD and IF field processing in Word OOXML documents with TypeScript
           </p>
@@ -203,95 +203,84 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-6">
           {/* Input Section */}
-          <div className="space-y-6">
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center mb-4">
-                <h2 className="text-xl font-semibold">XML Input</h2>
-                <label className="ml-4 flex items-center text-sm font-medium text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={simplified}
-                    onChange={handleSimplifiedToggle}
-                    className="mr-2"
-                  />
-                  Simplified view
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center mb-4">
+              <h2 className="text-xl font-semibold">XML Input</h2>
+              <label className="ml-4 flex items-center text-sm font-medium text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={simplified}
+                  onChange={handleSimplifiedToggle}
+                  className="mr-2"
+                />
+                Simplified view
+              </label>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Upload XML File</label>
+                <input
+                  type="file"
+                  accept=".xml"
+                  onChange={handleFileUpload}
+                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                />
+              </div>
+              <div>
+                <button
+                  onClick={loadSampleXml}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+                >
+                  Load Sample XML
+                </button>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  XML Content
                 </label>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Upload XML File
-                  </label>
-                  <input
-                    type="file"
-                    accept=".xml"
-                    onChange={handleFileUpload}
-                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                  />
-                </div>
-                <div>
-                  <button
-                    onClick={loadSampleXml}
-                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
-                  >
-                    Load Sample XML
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    XML Content
-                  </label>
-                  <CodeMirrorEditor
-                    value={xmlContent}
-                    onChange={setXmlContent}
-                    language="xml"
-                    placeholder="Paste your OOXML content here..."
-                    height="16rem"
-                  />
-                </div>
+                <CodeMirrorEditor
+                  value={xmlContent}
+                  language="xml"
+                  placeholder="Paste your OOXML content here..."
+                  editorRef={xmlEditorRef}
+                />
               </div>
             </div>
-
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-semibold mb-4">JSON Data</h2>
-              <p className="text-sm text-gray-600 mb-4">
-                Data for IF field evaluation (optional)
-              </p>
-              <CodeMirrorEditor
-                value={jsonData}
-                onChange={setJsonData}
-                language="json"
-                placeholder="Enter JSON data for IF field processing..."
-                height="12rem"
-              />
-            </div>
-
-            <button
-              onClick={processXml}
-              disabled={isProcessing || !xmlContent.trim()}
-              className="w-full py-3 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              {isProcessing ? 'Processing...' : 'Process OOXML'}
-            </button>
           </div>
 
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-semibold mb-4">JSON Data</h2>
+            <p className="text-sm text-gray-600 mb-4">Data for IF field evaluation (optional)</p>
+            <CodeMirrorEditor
+              value={jsonData}
+              language="json"
+              placeholder="Enter JSON data for IF field processing..."
+              editorRef={jsonEditorRef}
+            />
+          </div>
+
+          <button
+            onClick={processXml}
+            disabled={isProcessing || !xmlContent.trim()}
+            className="w-full py-3 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {isProcessing ? 'Processing...' : 'Process OOXML'}
+          </button>
+
           {/* Output Section */}
-          <div>
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-semibold mb-4">Processed Output</h2>
-              <p className="text-sm text-gray-600 mb-4">
-                Transformed OOXML with processed fields
-              </p>
-              <CodeMirrorEditor
-                value={processedXml}
-                readOnly
-                language="xml"
-                placeholder="Processed XML will appear here..."
-                height="24rem"
-              />
-            </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-semibold mb-4">Processed Output</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Transformed OOXML with processed fields
+            </p>
+            <CodeMirrorEditor
+              value={processedXml}
+              readOnly
+              language="xml"
+              placeholder="Processed XML will appear here..."
+            />
           </div>
         </div>
       </div>

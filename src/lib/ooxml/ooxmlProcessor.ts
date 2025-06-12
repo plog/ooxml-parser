@@ -40,32 +40,6 @@ export class OoxmlProcessor {
     return this.serializeXmlDocument(this.xmlDoc);
   }
 
-  public simplifyXml(): string {
-    // Remove all <w:tabs> elements
-    const tabs = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'tabs'));
-    tabs.forEach(tab => tab.parentNode?.removeChild(tab));
-
-    // Remove all <w:rFonts> elements
-    const rFonts = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'rFonts'));
-    rFonts.forEach(rFont => rFont.parentNode?.removeChild(rFont));
-
-    const drawing = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'drawing'));
-    rFonts.forEach(drawing => drawing.parentNode?.removeChild(drawing));
-    
-    // Remove empty <w:r> and <w:p> elements
-    const removeIfEmpty = (tag: string) => {
-      const elements = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
-      elements.forEach(el => {
-        if (!el.textContent?.trim() && el.childNodes.length === 0) {
-          el.parentNode?.removeChild(el);
-        }
-      });
-    };
-    removeIfEmpty('r');
-    removeIfEmpty('p');
-    return this.serializeXmlDocument(this.xmlDoc);
-  }
-
   private findMergeFieldInstructions(): Element[] {
     const instructions: Element[] = [];
     const instrTextElements = this.xmlDoc.getElementsByTagNameNS(
@@ -337,5 +311,83 @@ export class OoxmlProcessor {
     const parser = new DOMParser();
     return parser.parseFromString(xml, 'application/xml');
   }
+
+  /**
+   * Simplifies the XML document by removing unnecessary tags and empty elements.
+   * 
+   * @returns {string} The simplified XML as a string.
+   */
+  public simplifyXml(): string {
+      // Tags to remove completely
+      const tagsToRemove = ['tabs', 'rFonts', 'drawing', 'pStyle', 'rPr', 'pPr', 'tcPr','tblPr', 'tblGrid'];
+
+      tagsToRemove.forEach(tag => {
+        const elements = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
+        elements.forEach(el => {
+          el.parentNode?.removeChild(el);
+        });
+      });
+
+      // Remove empty <w:r> and <w:p> elements until none remain
+      const removeAllEmpty = (tag: string) => {
+        let removed: boolean;
+        do {
+          removed = false;
+          const elements = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, tag));
+          elements.forEach(el => {
+            // Remove if no element/text children or only whitespace
+            if (
+              (!el.textContent || !el.textContent.trim()) &&
+              Array.from(el.childNodes).every(
+                n => n.nodeType === Node.TEXT_NODE && !n.textContent?.trim()
+              )
+            ) {
+              el.parentNode?.removeChild(el);
+              removed = true;
+            }
+          });
+        } while (removed);
+      };
+      removeAllEmpty('r');
+      removeAllEmpty('p');
+
+      // Remove <w:p> containing only one <w:r> with one <w:br w:type="textWrapping"/>
+      const paragraphs = Array.from(this.xmlDoc.getElementsByTagNameNS(OoxmlProcessor.WORD_NAMESPACE, 'p'));
+      paragraphs.forEach(p => {
+        // Get non-whitespace child elements of <w:p>
+        const pChildren = Array.from(p.childNodes).filter(
+          n => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent?.trim())
+        );
+        if (
+          pChildren.length === 1 &&
+          pChildren[0].nodeType === Node.ELEMENT_NODE &&
+          (pChildren[0] as Element).localName === 'r'
+        ) {
+          const r = pChildren[0] as Element;
+          const rChildren = Array.from(r.childNodes).filter(
+            n => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent?.trim())
+          );
+          if (
+            rChildren.length === 1 &&
+            rChildren[0].nodeType === Node.ELEMENT_NODE &&
+            (rChildren[0] as Element).localName === 'br' &&
+            (rChildren[0] as Element).namespaceURI === OoxmlProcessor.WORD_NAMESPACE &&
+            (rChildren[0] as Element).getAttribute('w:type') === 'textWrapping'
+          ) {
+            p.parentNode?.removeChild(p);
+          }
+        }
+      });
+
+
+      // Serialize and remove empty lines from the XML string
+      let xmlString = this.serializeXmlDocument(this.xmlDoc);
+      xmlString = xmlString
+        .split('\n')
+        .filter(line => line.trim() !== '')
+        .join('\n');
+
+      return xmlString;
+    }  
 }
 

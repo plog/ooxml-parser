@@ -4,22 +4,22 @@ import { EditorState } from '@codemirror/state'
 import { xml } from '@codemirror/lang-xml'
 import { json } from '@codemirror/lang-json'
 
-interface CodeMirrorEditorProps {
+const CodeMirrorEditor: React.FC<{
   value: string
   onChange?: (value: string) => void
   language?: 'xml' | 'json'
   readOnly?: boolean
   placeholder?: string
   className?: string
-}
-
-const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
+  height?: string
+}> = ({
   value,
   onChange,
   language = 'xml',
   readOnly = false,
   placeholder = '',
-  className = ''
+  className = '',
+  height = '900px'
 }) => {
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -30,44 +30,13 @@ const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     const extensions = [
       basicSetup,
       language === 'xml' ? xml() : json(),
-      EditorView.theme({
-        '&': {
-          fontSize: '14px',
-          fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace'
-        },
-        '.cm-content': {
-          padding: '12px',
-          minHeight: '200px'
-        },
-        '.cm-focused': {
-          outline: 'none'
-        },
-        '.cm-editor': {
-          border: '1px solid #d1d5db',
-          borderRadius: '6px'
-        },
-        '.cm-editor.cm-focused': {
-          borderColor: '#3b82f6',
-          boxShadow: '0 0 0 1px #3b82f6'
-        }
-      }),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged && onChange && !readOnly) {
-          onChange(update.state.doc.toString())
-        }
-      }),
+      // EditorView.updateListener.of((update) => {
+      //   if (update.docChanged && onChange && !readOnly) {
+      //     onChange(update.state.doc.toString())
+      //   }
+      // }),
       EditorState.readOnly.of(readOnly)
     ]
-
-    if (placeholder) {
-      extensions.push(
-        EditorView.theme({
-          '.cm-placeholder': {
-            color: '#9ca3af'
-          }
-        })
-      )
-    }
 
     const state = EditorState.create({
       doc: value,
@@ -84,7 +53,7 @@ const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return () => {
       view.destroy()
     }
-  }, [language, readOnly, placeholder])
+  }, [language, readOnly, placeholder, height])
 
   useEffect(() => {
     if (viewRef.current && value !== viewRef.current.state.doc.toString()) {
